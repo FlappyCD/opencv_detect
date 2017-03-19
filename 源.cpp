@@ -3,16 +3,76 @@
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
-
+#include "head.h"
 using namespace cv;
 using namespace std;
 
 
 float max_radius, first_max_radius; Point2f max_center;//ROI参数
 float sec_radius; Point2f sec_center;//内轮廓为旋转中心
-
-
 //获取最大边缘轮廓,获得ROI区域/获取内轮廓的圆心和半径
+
+int getGeaer(Mat src)
+{
+	
+	Mat gray_img,  threshold_output;
+	int g_nThresh = 150;
+	int g_maxThresh = 255;
+	int areamax = 0; int imax = 0;
+	vector<vector<Point>> g_contours;
+	vector<Vec4i> g_hierarchy;
+
+	gray_img = src.clone();
+	blur(gray_img, gray_img, Size(3, 3));
+
+	threshold(gray_img, threshold_output, g_nThresh, 255, THRESH_BINARY);
+	findContours(threshold_output, g_contours, g_hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+	for (int idx = 0; idx >= 0; idx = g_hierarchy[idx][0])
+	{
+		Rect rect = boundingRect(g_contours[idx]);
+		int area = rect.width * rect.height;
+		if (area > areamax)
+		{
+			areamax = area;
+			imax = idx;
+		}
+	}
+	vector<Point> hull;
+	vector<Point> contours_poly;
+
+	approxPolyDP(Mat(g_contours[imax]), contours_poly, 3, true);
+	convexHull(contours_poly, hull, false);
+	return hull.size();
+	
+}
+
+int getConstnum(Mat src)
+{
+	Mat src_next; 
+	Mat src_first=src.clone();
+	for (int i = 1; i < 50; i++)
+	{
+		resize(src_first, src_next, Size(), 0.5, 0.5);
+
+		if ((getGeaer(src_first) - getGeaer(src_next)) / getGeaer(src_next)>=0.5)
+		{
+			return getGeaer(src_first);
+			break;
+		}
+		else
+		{
+			src_first = src_next.clone();
+			resize(src_first, src_next, Size(), 0.5, 0.5);
+		}
+
+
+	}
+
+
+
+}
+
 void Getcontours(InputArray src, OutputArray dst)
 {
 	vector<vector<Point> > contours;
@@ -73,51 +133,6 @@ void Getcontours(InputArray src, OutputArray dst)
 	/*...........................*/
 }
 
-//旋转函数
-Mat rotateImage1(Mat img, int degree, Point2f g_center)
-{
-	degree = -degree;
-	Mat img_rotate;
-	Mat rot = getRotationMatrix2D(g_center, degree, 1.0);
-	Rect bbox = RotatedRect(g_center, img.size(), degree).boundingRect();
-	rot.at<double>(0, 2) += bbox.width / 2.0 - g_center.x;
-	rot.at<double>(1, 2) += bbox.height / 2.0 - g_center.y;
-
-	cv::Mat dst;
-	cv::warpAffine(img, img_rotate, rot, bbox.size());
-	return img_rotate;
-}
-
-Mat rotateImage2(Mat img, int degree, Point2f g_center)
-{
-	degree = -degree;
-	double angle = degree  * CV_PI / 180.; // 弧度  
-	double a = sin(angle), b = cos(angle);
-	int width = img.cols;
-	int height = img.rows;
-	int width_rotate = int(height * fabs(a) + width * fabs(b));
-	int height_rotate = int(width * fabs(a) + height * fabs(b));
-	//旋转数组map
-	// [ m0  m1  m2 ] ===>  [ A11  A12   b1 ]
-	// [ m3  m4  m5 ] ===>  [ A21  A22   b2 ]
-	float map[6];
-	Mat map_matrix = Mat(2, 3, CV_32F, map);
-	// 旋转中心
-	CvPoint2D32f center = cvPoint2D32f(width / 2, height / 2);
-	CvMat map_matrix2 = map_matrix;
-	cv2DRotationMatrix(center, degree, 1.0, &map_matrix2);
-	map[2] += (width_rotate - width) / 2;
-	map[5] += (height_rotate - height) / 2;
-	Mat img_rotate;
-	//对图像做仿射变换
-	//CV_WARP_FILL_OUTLIERS - 填充所有输出图像的象素。
-	//如果部分象素落在输入图像的边界外，那么它们的值设定为 fillval.
-	//CV_WARP_INVERSE_MAP - 指定 map_matrix 是输出图像到输入图像的反变换，
-	warpAffine(img, img_rotate, map_matrix, Size(width_rotate, height_rotate), 1, 0, 0);
-	return img_rotate;
-}
-
-
 
 int main()
 {
@@ -125,42 +140,40 @@ int main()
 	Mat rotate_maps[15]; Mat ImageROIS[15];//旋转图形和旋转ROI
 	Mat diffcv;
 	Mat temp_rotate;//旋转之后的ROI区域暂存
-	Mat gray_img, dst_img, dst_contours, temp_contours, real_no_use;//原图像轮廓的相关应用变量
+	Mat gray_img, dst_img, dst_contours,temp_contours,real_no_use;//原图像轮廓的相关应用变量
 	//下面直接用自动的阈值操作来除噪
 	cvtColor(img, gray_img, COLOR_RGB2GRAY);//原始灰度图
-	threshold(gray_img, dst_img, 140, 255, 3);//dst_img阈值之后的二值化图
-
-	Getcontours(dst_img, dst_contours);//这个调用的作用是获取两个center和两个radius对图像没有任何影响
+	threshold(gray_img,dst_img,140,255,3);//dst_img阈值之后的二值化图
+	
+	Getcontours(dst_img,dst_contours);//这个调用的作用是获取两个center和两个radius对图像没有任何影响
 	first_max_radius = max_radius;
 
 	Mat temp = dst_img;
 	//下面来获取赶兴趣区域
-	Mat imageROI;
-	circle(temp, max_center, (int)max_radius, Scalar(255, 255, 255), 2, 8, 0);
+	Mat imageROI; 
+	//circle(temp, max_center, (int)max_radius, Scalar(255, 255, 255), 2, 8, 0);
 	imageROI = temp(Rect(max_center.x - max_radius, max_center.y - max_radius, max_radius * 2, max_radius * 2));//最小正方形区域
-
+	
 	vector<vector<Point> > contours;
 	vector<Vec4i> hierarchy;
 
 	//查找轮廓，并填充
 	findContours(imageROI, contours, hierarchy, RETR_EXTERNAL, CV_CHAIN_APPROX_NONE, Point(0, 0));
-	drawContours(imageROI, contours, -1, (255, 255, 255), FILLED, 8, hierarchy);
 
-
+	drawContours(imageROI, contours,-1,(255,255,255),FILLED,8,hierarchy);
+	
+	imwrite("000.jpg", imageROI);
+	//int num = getGeaer(imageROI);
 
 	//circle(temp, sec_center, (int)sec_radius, Scalar(0, 255, 255), 2, 8, 0);
 	//circle(temp, sec_center, 4, Scalar(0, 255, 255), -1, 8, 0);
-
-
-	namedWindow("result", WINDOW_NORMAL);
-	imshow("result", temp);
-
-
+		
 	//转过一次之后,那我们再来对此去最小ROI就可以避免出现大小不一的情况了
 
 
-	rotate_maps[0] = imageROI.clone();
+	int num = getConstnum(imageROI);
 
+	rotate_maps[0] = imageROI.clone();
 
 
 	//接下来用sec_center为中心来进行旋转24度*15次=360度
@@ -181,7 +194,7 @@ int main()
 	}
 
 	Mat average = Mat::zeros(imageROI.size(), CV_32F); //累加和存储
-
+	
 	accumulate(rotate_maps[0], average);
 
 	for (int i = 1; i < 15; i++)
@@ -196,16 +209,18 @@ int main()
 	diffcv = Mat::zeros(imageROI.size(), CV_32F);
 	imageROI.convertTo(imageROI, CV_32F);
 	average.convertTo(average, CV_32F);
-
+	
 	diffcv = imageROI - average;
 
 	imwrite("diffv.jpg", diffcv);
-
+	
 	threshold(diffcv, diffcv, 200, 255, 3);
 
 
 	namedWindow("diff", WINDOW_NORMAL);
 	imshow("diff", diffcv);
+
+
 	waitKey(0);
 
 
